@@ -151,6 +151,36 @@
   line-height: 1.75;
 }
 
+.sparklineWrap {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sparklineMeta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sparklineMeta strong {
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.sparklineMeta span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sparklineSvg {
+  width: 100%;
+  height: 76px;
+  display: block;
+}
+
 .outcomeList {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

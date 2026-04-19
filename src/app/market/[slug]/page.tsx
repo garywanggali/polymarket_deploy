@@ -52,8 +52,66 @@ function formatSigned(n: number | null, digits: number) {
   return `${s}${n.toFixed(digits)}`;
 }
 
-export default async function MarketPage(props: { params: Promise<{ slug: string }> }) {
+function toInt(v: string | string[] | undefined, fallback: number) {
+  const s = typeof v === "string" ? v : "";
+  const n = Number.parseInt(s, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function toFloat(v: string | string[] | undefined, fallback: number) {
+  const s = typeof v === "string" ? v : "";
+  const n = Number.parseFloat(s);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function sparkline(
+  values: (number | null)[],
+  size: { w: number; h: number; pad: number },
+): { line: string; area: string; last: { x: number; y: number } | null; min: number; max: number } | null {
+  const pts: { i: number; v: number }[] = [];
+  for (let i = 0; i < values.length; i += 1) {
+    const v = values[i];
+    if (typeof v === "number" && Number.isFinite(v)) pts.push({ i, v });
+  }
+  if (pts.length < 2) return null;
+
+  let min = pts[0]!.v;
+  let max = pts[0]!.v;
+  for (const p of pts) {
+    if (p.v < min) min = p.v;
+    if (p.v > max) max = p.v;
+  }
+  const span = Math.max(1e-9, max - min);
+
+  const xOf = (i: number) => {
+    const t = pts.length <= 1 ? 0 : i / (pts.length - 1);
+    return size.pad + t * (size.w - size.pad * 2);
+  };
+  const yOf = (v: number) => {
+    const t = (v - min) / span;
+    return size.h - size.pad - t * (size.h - size.pad * 2);
+  };
+
+  const coords = pts.map((p, idx) => {
+    const x = xOf(idx);
+    const y = yOf(p.v);
+    return { x, y };
+  });
+
+  const line = coords.map((c, idx) => `${idx === 0 ? "M" : "L"}${c.x.toFixed(2)},${c.y.toFixed(2)}`).join(" ");
+  const area = `${line} L${(size.w - size.pad).toFixed(2)},${(size.h - size.pad).toFixed(2)} L${size.pad.toFixed(2)},${(
+    size.h - size.pad
+  ).toFixed(2)} Z`;
+  const last = coords.length > 0 ? coords[coords.length - 1]! : null;
+  return { line, area, last, min, max };
+}
+
+export default async function MarketPage(props: {
+  params: Promise<{ slug: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { slug } = await props.params;
+  const searchParams = (await props.searchParams) ?? {};
   const index = await readMarketIndex();
   const market = index?.markets.find((m) => m.slug === slug) ?? null;
   if (!market) notFound();
@@ -100,6 +158,90 @@ export default async function MarketPage(props: { params: Promise<{ slug: string
     return out;
   })();
 
+  const btMovesRaw = typeof searchParams.btMoves === "string" ? searchParams.btMoves.trim() : "0.005,0.01,0.02";
+  const btHoldsRaw = typeof searchParams.btHolds === "string" ? searchParams.btHolds.trim() : "1,2,5";
+  const btMinLiq = Math.max(0, toInt(searchParams.btMinLiq, 0));
+  const btMinQuality = Math.min(1, Math.max(0, toFloat(searchParams.btMinQuality, 0.35)));
+
+  const btMoves = btMovesRaw
+    .split(",")
+    .map((s) => Number.parseFloat(s.trim()))
+    .filter((x) => Number.isFinite(x) && x > 0 && x < 0.5)
+    .slice(0, 10);
+
+  const btHolds = btHoldsRaw
+    .split(",")
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((x) => Number.isFinite(x) && x >= 1 && x <= 20)
+    .slice(0, 10);
+
+  const eventSlug = market.eventSlug ?? null;
+  const eventSlugs =
+    eventSlug === null ? [] : (index?.markets ?? []).filter((m) => (m.eventSlug ?? null) === eventSlug).map((m) => m.slug);
+  const eventSlugSet = new Set(eventSlugs);
+
+  const eventConsistencyByTime = (() => {
+    if (!eventSlug || snapshots.length < 2) return new Map<string, { movedCount: number; ratio: number; dominantDir: -1 | 0 | 1 }>();
+    const movedThreshold = 0.005;
+    const out = new Map<string, { movedCount: number; ratio: number; dominantDir: -1 | 0 | 1 }>();
+    for (let i = 1; i < snapshots.length; i += 1) {
+      const prev = snapshots[i - 1]!;
+      const cur = snapshots[i]!;
+      const prevMap = new Map(prev.markets.map((m) => [m.slug, m] as const));
+      let movedCount = 0;
+      let sum = 0;
+      for (const sm of cur.markets) {
+        if (!eventSlugSet.has(sm.slug)) continue;
+        const pm = prevMap.get(sm.slug);
+        if (!pm) continue;
+        const p1 = getYesPrice(sm.outcomes);
+        const p0 = getYesPrice(pm.outcomes);
+        if (p1 === null || p0 === null) continue;
+        const d = p1 - p0;
+        if (Math.abs(d) < movedThreshold) continue;
+        movedCount += 1;
+        sum += d;
+      }
+      if (movedCount < 2) continue;
+      const dominantDir: -1 | 0 | 1 = sum > 0 ? 1 : sum < 0 ? -1 : 0;
+      let sameDirCount = 0;
+      if (dominantDir !== 0) {
+        for (const sm of cur.markets) {
+          if (!eventSlugSet.has(sm.slug)) continue;
+          const pm = prevMap.get(sm.slug);
+          if (!pm) continue;
+          const p1 = getYesPrice(sm.outcomes);
+          const p0 = getYesPrice(pm.outcomes);
+          if (p1 === null || p0 === null) continue;
+          const d = p1 - p0;
+          if (Math.abs(d) < movedThreshold) continue;
+          const dir: -1 | 1 = d > 0 ? 1 : -1;
+          if (dir === dominantDir) sameDirCount += 1;
+        }
+      }
+      const ratio = movedCount > 0 ? sameDirCount / movedCount : 0;
+      out.set(cur.t, { movedCount, ratio, dominantDir });
+    }
+    return out;
+  })();
+
+  const qualityScore = (r: { liquidity: number | null; dVolumePerHour: number | null }, eventRatio: number | null) => {
+    const liq = r.liquidity ?? 0;
+    const liqTier = liq >= 200_000 ? 1 : liq >= 50_000 ? 0.8 : liq >= 10_000 ? 0.5 : liq > 0 ? 0.2 : 0;
+    const v = Math.abs(r.dVolumePerHour ?? 0);
+    const volScore = v <= 0 ? 0 : Math.min(1, Math.log10(v + 1) / 5);
+    const ev = eventRatio ?? 0;
+    const score = 0.5 * liqTier + 0.3 * volScore + 0.2 * ev;
+    return Math.min(1, Math.max(0, score));
+  };
+
+  const seriesWithQuality = series.map((r) => {
+    const ec = eventConsistencyByTime.get(r.t) ?? null;
+    const eventRatio = ec ? ec.ratio : null;
+    const quality = qualityScore(r, eventRatio);
+    return { ...r, quality, eventRatio };
+  });
+
   type BtRow = {
     moveMin: number;
     hold: number;
@@ -108,12 +250,13 @@ export default async function MarketPage(props: { params: Promise<{ slug: string
     avgPnl: number;
     avgNetPnl: number;
     avgAbsMove: number;
+    avgQuality: number;
   };
 
   const backtestRows: BtRow[] = (() => {
-    if (series.length < 4) return [];
-    const moveMins = [0.005, 0.01, 0.02];
-    const holds = [1, 2, 5];
+    if (seriesWithQuality.length < 4) return [];
+    const moveMins = btMoves.length > 0 ? btMoves : [0.005, 0.01, 0.02];
+    const holds = btHolds.length > 0 ? btHolds : [1, 2, 5];
     const rows: BtRow[] = [];
 
     const costPenalty = (liq: number | null) => {
@@ -129,13 +272,16 @@ export default async function MarketPage(props: { params: Promise<{ slug: string
         let pnlSum = 0;
         let netSum = 0;
         let absMoveSum = 0;
+        let qSum = 0;
 
-        for (let i = 1; i < series.length - hold; i++) {
-          const now = series[i];
-          const next = series[i + hold];
+        for (let i = 1; i < seriesWithQuality.length - hold; i++) {
+          const now = seriesWithQuality[i];
+          const next = seriesWithQuality[i + hold];
           if (!now || !next) continue;
           if (now.price === null || next.price === null) continue;
           if (now.dPrice === null) continue;
+          if ((now.liquidity ?? 0) < btMinLiq) continue;
+          if (now.quality < btMinQuality) continue;
           const absMove = Math.abs(now.dPrice);
           if (absMove < moveMin) continue;
 
@@ -145,6 +291,7 @@ export default async function MarketPage(props: { params: Promise<{ slug: string
           pnlSum += pnl;
           netSum += net;
           absMoveSum += absMove;
+          qSum += now.quality;
           if (net > 0) wins += 1;
         }
 
@@ -156,6 +303,7 @@ export default async function MarketPage(props: { params: Promise<{ slug: string
           avgPnl: trades > 0 ? pnlSum / trades : 0,
           avgNetPnl: trades > 0 ? netSum / trades : 0,
           avgAbsMove: trades > 0 ? absMoveSum / trades : 0,
+          avgQuality: trades > 0 ? qSum / trades : 0,
         });
       }
     }
@@ -164,7 +312,6 @@ export default async function MarketPage(props: { params: Promise<{ slug: string
   })();
 
   const eventPulse = (() => {
-    const eventSlug = market.eventSlug ?? null;
     if (!eventSlug) return null;
     if (snapshots.length < 2) return null;
     const prev = snapshots[snapshots.length - 2] ?? null;
@@ -219,6 +366,64 @@ export default async function MarketPage(props: { params: Promise<{ slug: string
           label: `事件一致性 ${sameDirCount}/${movedCount} 同向（阈值 |Δp|≥${movedThreshold.toFixed(3)}）`,
         }
       : null;
+  })();
+
+  const priceSeries = seriesWithQuality.map((r) => r.price);
+  const volSeries = seriesWithQuality.map((r) => r.volume24hr);
+  const liqSeries = seriesWithQuality.map((r) => r.liquidity);
+  const accelSeries = seriesWithQuality.map((r) => r.dVolumePerHour);
+  const qualitySeries = seriesWithQuality.map((r) => r.quality);
+
+  const eventPeers = (() => {
+    if (!eventSlug || snapshots.length < 2) return [];
+    const prev = snapshots[snapshots.length - 2] ?? null;
+    const last = snapshots[snapshots.length - 1] ?? null;
+    if (!prev || !last) return [];
+    const prevMap = new Map(prev.markets.map((m) => [m.slug, m] as const));
+    const peers: {
+      slug: string;
+      title: string;
+      price: number | null;
+      prevPrice: number | null;
+      dPrice: number | null;
+      absMove: number | null;
+      liquidity: number | null;
+      volAccel: number | null;
+      quality: number;
+    }[] = [];
+
+    for (const sm of last.markets) {
+      if (!eventSlugSet.has(sm.slug)) continue;
+      const meta = metaBySlug.get(sm.slug) ?? null;
+      if (!meta) continue;
+      const pm = prevMap.get(sm.slug) ?? null;
+      const p1 = getYesPrice(sm.outcomes);
+      const p0 = pm ? getYesPrice(pm.outcomes) : null;
+      const dPrice = p1 !== null && p0 !== null ? p1 - p0 : null;
+      const absMove = dPrice === null ? null : Math.abs(dPrice);
+      const liq = sm.liquidity ?? meta.liquidity ?? null;
+      const v1 = sm.volume24hr ?? meta.volume24hr ?? null;
+      const v0 = pm?.volume24hr ?? null;
+      const dtHours =
+        prev && last ? Math.max(1 / 60, (Date.parse(last.t) - Date.parse(prev.t)) / (1000 * 60 * 60)) : null;
+      const volAccel = v1 !== null && v0 !== null ? (dtHours ? (v1 - v0) / dtHours : v1 - v0) : null;
+      const ec = eventConsistencyByTime.get(last.t) ?? null;
+      const q = qualityScore({ liquidity: liq, dVolumePerHour: volAccel }, ec ? ec.ratio : null);
+      peers.push({
+        slug: sm.slug,
+        title: meta.title,
+        price: p1,
+        prevPrice: p0,
+        dPrice,
+        absMove,
+        liquidity: liq,
+        volAccel,
+        quality: q,
+      });
+    }
+
+    peers.sort((a, b) => (b.absMove ?? 0) - (a.absMove ?? 0));
+    return peers.slice(0, 12);
   })();
 
   return (
@@ -301,6 +506,167 @@ export default async function MarketPage(props: { params: Promise<{ slug: string
                   主方向：{eventPulse.dominantDir > 0 ? "同向上升" : "同向下降"}
                 </span>
               ) : null}
+              <span className="pmPill">
+                质量分（最新）{seriesWithQuality.length > 0 ? seriesWithQuality[seriesWithQuality.length - 1]!.quality.toFixed(2) : "-"}
+              </span>
+            </div>
+          ) : null}
+
+          <div className={styles.noteGrid} style={{ marginBottom: 12 }}>
+            {(() => {
+              const w = 420;
+              const h = 76;
+              const pad = 8;
+              const s1 = sparkline(priceSeries, { w, h, pad });
+              const s2 = sparkline(volSeries, { w, h, pad });
+              const s3 = sparkline(liqSeries, { w, h, pad });
+              const s4 = sparkline(accelSeries, { w, h, pad });
+              const s5 = sparkline(qualitySeries, { w, h, pad });
+
+              const card = (
+                title: string,
+                lastText: string,
+                rangeText: string,
+                s: typeof s1,
+                colors: { stroke: string; fill: string },
+                id: string,
+              ) => (
+                <div className={styles.noteCard}>
+                  <strong>{title}</strong>
+                  <div className={styles.sparklineWrap}>
+                    <div className={styles.sparklineMeta}>
+                      <strong>{lastText}</strong>
+                      <span>{rangeText}</span>
+                    </div>
+                    <svg className={styles.sparklineSvg} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+                      <defs>
+                        <linearGradient id={`g-${id}`} x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%" stopColor={colors.stroke} stopOpacity="0.55" />
+                          <stop offset="50%" stopColor={colors.stroke} stopOpacity="1" />
+                          <stop offset="100%" stopColor={colors.stroke} stopOpacity="0.55" />
+                        </linearGradient>
+                        <linearGradient id={`a-${id}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={colors.fill} stopOpacity="0.35" />
+                          <stop offset="100%" stopColor={colors.fill} stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      {s ? (
+                        <>
+                          <path d={s.area} fill={`url(#a-${id})`} />
+                          <path d={s.line} fill="none" stroke={`url(#g-${id})`} strokeWidth="2.4" />
+                          {s.last ? <circle cx={s.last.x} cy={s.last.y} r="3.4" fill={colors.stroke} /> : null}
+                        </>
+                      ) : (
+                        <text x="10" y="42" fill="rgba(255,232,190,0.7)" fontSize="12">
+                          快照不足
+                        </text>
+                      )}
+                    </svg>
+                  </div>
+                </div>
+              );
+
+              const lastPrice = priceSeries.length > 0 ? priceSeries[priceSeries.length - 1] : null;
+              const lastVol = volSeries.length > 0 ? volSeries[volSeries.length - 1] : null;
+              const lastLiq = liqSeries.length > 0 ? liqSeries[liqSeries.length - 1] : null;
+              const lastAccel = accelSeries.length > 0 ? accelSeries[accelSeries.length - 1] : null;
+              const lastQ = qualitySeries.length > 0 ? qualitySeries[qualitySeries.length - 1] : null;
+
+              return (
+                <>
+                  {card(
+                    "YES 概率走势",
+                    lastPrice === null ? "-" : `${(lastPrice * 100).toFixed(1)}%`,
+                    s1 ? `区间 ${(s1.min * 100).toFixed(1)}%–${(s1.max * 100).toFixed(1)}%` : "区间 -",
+                    s1,
+                    { stroke: "rgb(243,182,80)", fill: "rgb(243,182,80)" },
+                    `p-${slug}`,
+                  )}
+                  {card(
+                    "24h 成交走势",
+                    formatNumber(lastVol),
+                    s2 ? `区间 ${formatNumber(s2.min)}–${formatNumber(s2.max)}` : "区间 -",
+                    s2,
+                    { stroke: "rgb(56,211,159)", fill: "rgb(56,211,159)" },
+                    `v-${slug}`,
+                  )}
+                  {card(
+                    "流动性走势",
+                    formatNumber(lastLiq),
+                    s3 ? `区间 ${formatNumber(s3.min)}–${formatNumber(s3.max)}` : "区间 -",
+                    s3,
+                    { stroke: "rgb(255,126,139)", fill: "rgb(255,126,139)" },
+                    `l-${slug}`,
+                  )}
+                  {card(
+                    "成交变化/小时",
+                    lastAccel === null ? "-" : formatSigned(lastAccel, 0),
+                    s4 ? `区间 ${formatNumber(s4.min)}–${formatNumber(s4.max)}` : "区间 -",
+                    s4,
+                    { stroke: "rgb(123,149,239)", fill: "rgb(123,149,239)" },
+                    `a-${slug}`,
+                  )}
+                  {card(
+                    "质量分（0-1）",
+                    lastQ === null ? "-" : lastQ.toFixed(2),
+                    s5 ? `区间 ${s5.min.toFixed(2)}–${s5.max.toFixed(2)}` : "区间 -",
+                    s5,
+                    { stroke: "rgb(255,215,135)", fill: "rgb(255,215,135)" },
+                    `q-${slug}`,
+                  )}
+                </>
+              );
+            })()}
+          </div>
+
+          {eventPeers.length > 0 ? (
+            <div style={{ marginBottom: 12 }}>
+              <div className={styles.desc} style={{ marginTop: 0 }}>
+                同事件盘口对比（最近两条快照）：越多市场同向一起动，越像真消息；只动一个可能是噪音。
+              </div>
+              <div className={styles.tableWrap} style={{ marginTop: 10 }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>同事件市场</th>
+                      <th style={{ textAlign: "right" }}>p</th>
+                      <th style={{ textAlign: "right" }}>Δp</th>
+                      <th style={{ textAlign: "right" }}>成交变化/小时</th>
+                      <th style={{ textAlign: "right" }}>流动性</th>
+                      <th style={{ textAlign: "right" }}>质量分</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {eventPeers.map((p) => (
+                      <tr key={p.slug}>
+                        <td>
+                          <Link href={`/market/${encodeURIComponent(p.slug)}`} style={{ fontWeight: 800 }}>
+                            {p.title}
+                          </Link>
+                          <div className={styles.muted} style={{ marginTop: 4 }}>
+                            {p.slug}
+                          </div>
+                        </td>
+                        <td style={{ textAlign: "right" }} className={styles.mono}>
+                          {p.price === null ? "-" : p.price.toFixed(3)}
+                        </td>
+                        <td style={{ textAlign: "right" }} className={p.dPrice === null ? styles.mono : p.dPrice >= 0 ? styles.pos : styles.neg}>
+                          {p.dPrice === null ? "-" : formatSigned(p.dPrice, 3)}
+                        </td>
+                        <td style={{ textAlign: "right" }} className={styles.mono}>
+                          {p.volAccel === null ? "-" : formatSigned(p.volAccel, 0)}
+                        </td>
+                        <td style={{ textAlign: "right" }} className={styles.mono}>
+                          {formatNumber(p.liquidity)}
+                        </td>
+                        <td style={{ textAlign: "right" }} className={styles.mono}>
+                          {p.quality.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : null}
 
@@ -364,6 +730,46 @@ export default async function MarketPage(props: { params: Promise<{ slug: string
             </div>
           </div>
 
+          <form style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
+              <span className={styles.muted} style={{ fontSize: 12, fontWeight: 700 }}>
+                回测阈值 |Δp|（逗号）
+              </span>
+              <input name="btMoves" defaultValue={btMovesRaw} className="pmInput" />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 180 }}>
+              <span className={styles.muted} style={{ fontSize: 12, fontWeight: 700 }}>
+                持有快照数（逗号）
+              </span>
+              <input name="btHolds" defaultValue={btHoldsRaw} className="pmInput" />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 160 }}>
+              <span className={styles.muted} style={{ fontSize: 12, fontWeight: 700 }}>
+                最小流动性
+              </span>
+              <input name="btMinLiq" defaultValue={String(btMinLiq)} className="pmInput" type="number" step={1000} min={0} />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 160 }}>
+              <span className={styles.muted} style={{ fontSize: 12, fontWeight: 700 }}>
+                最小质量分(0-1)
+              </span>
+              <input
+                name="btMinQuality"
+                defaultValue={String(btMinQuality)}
+                className="pmInput"
+                type="number"
+                step={0.05}
+                min={0}
+                max={1}
+              />
+            </label>
+            <div style={{ display: "flex", alignItems: "end" }}>
+              <button type="submit" className="pmButton pmButtonPrimary">
+                应用回测参数
+              </button>
+            </div>
+          </form>
+
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <thead>
@@ -375,6 +781,7 @@ export default async function MarketPage(props: { params: Promise<{ slug: string
                   <th style={{ textAlign: "right" }}>均值收益</th>
                   <th style={{ textAlign: "right" }}>均值净收益</th>
                   <th style={{ textAlign: "right" }}>均值|move|</th>
+                  <th style={{ textAlign: "right" }}>均值质量分</th>
                 </tr>
               </thead>
               <tbody>
@@ -402,11 +809,14 @@ export default async function MarketPage(props: { params: Promise<{ slug: string
                       <td style={{ textAlign: "right" }} className={styles.mono}>
                         {r.avgAbsMove.toFixed(4)}
                       </td>
+                      <td style={{ textAlign: "right" }} className={styles.mono}>
+                        {r.avgQuality.toFixed(2)}
+                      </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={7} className={styles.muted} style={{ padding: 12 }}>
+                    <td colSpan={8} className={styles.muted} style={{ padding: 12 }}>
                       快照不足，暂无回测结果。请先抓取更多次盘口再回来查看。
                     </td>
                   </tr>

@@ -119,6 +119,7 @@ export default async function Home(props: { searchParams: Promise<Record<string,
       const price = getYesPrice(m.outcomes);
       const prevPrice = prev ? getYesPrice(prev.outcomes) : null;
       const move = price !== null && prevPrice !== null ? price - prevPrice : null;
+      const absMove = move === null ? null : Math.abs(move);
       return {
         slug: m.slug,
         title: full?.title ?? m.slug,
@@ -127,13 +128,16 @@ export default async function Home(props: { searchParams: Promise<Record<string,
         signals: full?.signals ?? [],
         price,
         move,
+        absMove,
         liquidity: m.liquidity ?? full?.liquidity ?? null,
         volume24hr: m.volume24hr ?? full?.volume24hr ?? null,
       };
     })
-    .filter((m) => Math.abs(m.move ?? 0) >= 0.01)
-    .sort((a, b) => Math.abs(b.move ?? 0) - Math.abs(a.move ?? 0))
+    .filter((m) => m.absMove !== null)
+    .sort((a, b) => (b.absMove ?? 0) - (a.absMove ?? 0))
     .slice(0, 6);
+
+  const topAbsMove = radarRows.length > 0 ? (radarRows[0]?.absMove ?? null) : null;
 
   const deepseekKey = (process.env.DEEPSEEK_API_KEY ?? "").trim();
   const deepseekBaseUrl = (process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1").trim().replace(/\/+$/, "");
@@ -329,7 +333,13 @@ export default async function Home(props: { searchParams: Promise<Record<string,
             <div>
               <div className={styles.sectionEyebrow}>先看热点变化</div>
               <h2 className={styles.sectionTitle}>最近动得最明显的市场</h2>
-              <p className={styles.sectionDesc}>{lastSnap && prevSnap ? `对比 ${formatDate(prevSnap.t)} 和 ${formatDate(lastSnap.t)} 的变化。` : "至少抓取 2 次数据后，这里才会更有参考意义。"}</p>
+              <p className={styles.sectionDesc}>
+                {lastSnap && prevSnap
+                  ? `对比 ${formatDate(prevSnap.t)} 和 ${formatDate(lastSnap.t)} 的变化。${
+                      topAbsMove !== null ? ` 当前最大 |Δp|≈${topAbsMove.toFixed(3)}。` : ""
+                    }`
+                  : "至少抓取 2 次数据后，这里才会更有参考意义。"}
+              </p>
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, marginBottom: 12, flexWrap: "wrap" }}>
