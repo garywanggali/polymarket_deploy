@@ -1,0 +1,278 @@
+.page {
+  width: 100%;
+  padding: 24px 16px 56px;
+}
+
+.main {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.hero,
+.section {
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero::before,
+.section::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(120deg, rgba(255, 205, 118, 0.08), transparent 42%, rgba(190, 36, 54, 0.1));
+}
+
+.hero > *,
+.section > * {
+  position: relative;
+  z-index: 1;
+}
+
+.topRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.topActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.heroBody {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.title {
+  margin-top: 14px;
+  font-size: clamp(30px, 4.6vw, 44px);
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  color: #ffe6b4;
+  text-shadow: 0 0 20px rgba(255, 194, 91, 0.2);
+}
+
+.desc,
+.longText,
+.noteCard p,
+.outcomeHint,
+.muted {
+  color: var(--muted);
+}
+
+.desc {
+  margin-top: 12px;
+  max-width: 62ch;
+  line-height: 1.7;
+}
+
+.summaryGrid,
+.noteGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summaryCard,
+.noteCard,
+.outcomeCard {
+  border: 1px solid var(--border);
+  background: linear-gradient(165deg, rgba(79, 18, 24, 0.58), rgba(35, 8, 11, 0.62));
+  border-radius: 18px;
+  box-shadow: inset 0 0 0 1px rgba(255, 207, 119, 0.08);
+}
+
+.summaryCard {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.summaryCard span,
+.eyebrow,
+.noteCard p,
+.outcomeHint,
+.muted {
+  font-size: 14px;
+}
+
+.summaryCard strong {
+  font-size: 22px;
+  line-height: 1.3;
+}
+
+.sectionHead {
+  margin-bottom: 16px;
+}
+
+.eyebrow {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.sectionTitle {
+  margin-top: 6px;
+  font-size: 28px;
+  letter-spacing: -0.03em;
+  color: #ffe2af;
+  text-shadow: 0 0 16px rgba(255, 193, 83, 0.16);
+}
+
+.noteGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.noteCard {
+  padding: 18px;
+}
+
+.noteCard strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 16px;
+}
+
+.noteCard p {
+  line-height: 1.75;
+}
+
+.outcomeList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.outcomeCard {
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.outcomeName {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.outcomeHint {
+  margin-top: 6px;
+  line-height: 1.6;
+}
+
+.outcomePrice {
+  font-size: 28px;
+  letter-spacing: -0.03em;
+}
+
+.longText {
+  white-space: pre-wrap;
+  line-height: 1.8;
+  font-size: 15px;
+}
+
+.tagWrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tagWrap + .tagWrap {
+  margin-top: 14px;
+}
+
+.tableWrap {
+  width: 100%;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.table th,
+.table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(233, 184, 97, 0.18);
+  vertical-align: top;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  background: rgba(40, 8, 10, 0.92);
+  z-index: 1;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+
+.pos {
+  color: var(--success);
+  font-variant-numeric: tabular-nums;
+}
+
+.neg {
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .summaryGrid,
+  .noteGrid,
+  .outcomeList {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding: 14px 12px 36px;
+  }
+
+  .hero,
+  .section {
+    padding: 18px;
+  }
+
+  .topRow,
+  .topActions,
+  .summaryGrid,
+  .noteGrid,
+  .outcomeList {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .outcomeCard {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .outcomePrice {
+    font-size: 24px;
+  }
+}

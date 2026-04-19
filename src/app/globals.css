@@ -1,17 +1,56 @@
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #160507;
+  --foreground: #ffe8be;
+  --muted: #d5b987;
+  --card: rgba(40, 8, 10, 0.82);
+  --card-strong: #5d1015;
+  --border: rgba(233, 184, 97, 0.28);
+  --border-strong: rgba(255, 213, 136, 0.48);
+  --accent: #f3b650;
+  --accent-soft: rgba(243, 182, 80, 0.2);
+  --success: #38d39f;
+  --success-soft: rgba(56, 211, 159, 0.18);
+  --danger: #ff6c82;
+  --danger-soft: rgba(255, 108, 130, 0.2);
+  --warning: #ffce65;
+  --warning-soft: rgba(255, 206, 101, 0.22);
+  --odds-home: #ffc36d;
+  --odds-away: #ff7e8b;
+  --odds-neutral: #d6b272;
+  --hot: #ff8e6f;
+  --cold: #ffc971;
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #120305;
+    --foreground: #ffe8be;
+    --muted: #d6b885;
+    --card: rgba(40, 8, 10, 0.84);
+    --card-strong: #571016;
+    --border: rgba(233, 184, 97, 0.28);
+    --border-strong: rgba(255, 213, 136, 0.5);
+    --accent: #f3b650;
+    --accent-soft: rgba(243, 182, 80, 0.2);
+    --success: #3bd6a4;
+    --success-soft: rgba(59, 214, 164, 0.18);
+    --danger: #ff7f94;
+    --danger-soft: rgba(255, 127, 148, 0.2);
+    --warning: #ffd56b;
+    --warning-soft: rgba(255, 213, 107, 0.24);
+    --odds-home: #ffc36d;
+    --odds-away: #ff8692;
+    --odds-neutral: #d6b272;
+    --hot: #ff916f;
+    --cold: #ffc971;
+    --shadow: 0 16px 42px rgba(0, 0, 0, 0.45);
   }
 }
 
 html {
   height: 100%;
+  scroll-behavior: smooth;
 }
 
 html,
@@ -25,10 +64,28 @@ body {
   display: flex;
   flex-direction: column;
   color: var(--foreground);
-  background: var(--background);
+  background:
+    radial-gradient(circle at 14% 8%, rgba(245, 111, 93, 0.22), transparent 28%),
+    radial-gradient(circle at 90% 2%, rgba(243, 182, 80, 0.18), transparent 24%),
+    radial-gradient(circle at 50% 110%, rgba(95, 18, 22, 0.5), transparent 45%),
+    linear-gradient(180deg, rgba(127, 23, 30, 0.42), transparent 34%),
+    var(--background);
+  background-attachment: fixed;
+  background-size: 120% 120%, 130% 130%, 120% 120%, 100% 100%, auto;
+  animation: bgDrift 18s ease-in-out infinite alternate;
   font-family: Arial, Helvetica, sans-serif;
+  font-family: "Arial Narrow", "DIN Alternate", "Segoe UI", Arial, Helvetica, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+@keyframes bgDrift {
+  0% {
+    background-position: 14% 8%, 90% 2%, 50% 110%, 0 0, 0 0;
+  }
+  100% {
+    background-position: 12% 10%, 88% 4%, 50% 106%, 0 18px, 0 0;
+  }
 }
 
 * {
@@ -42,8 +99,220 @@ a {
   text-decoration: none;
 }
 
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+.pmCard {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+}
+
+.pmButton {
+  position: relative;
+  overflow: hidden;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: linear-gradient(180deg, rgba(98, 16, 23, 0.88), rgba(58, 9, 13, 0.92));
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 800;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, opacity 0.18s ease, box-shadow 0.2s ease;
+}
+
+.pmButton::after {
+  content: "";
+  position: absolute;
+  inset: -40% auto auto -20%;
+  width: 40%;
+  height: 180%;
+  background: linear-gradient(120deg, transparent, rgba(255, 245, 210, 0.35), transparent);
+  transform: translateX(-180%) rotate(16deg);
+  transition: transform 0.45s ease;
+}
+
+.pmButton:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: #ffdba3;
+  box-shadow: 0 0 0 1px rgba(255, 214, 140, 0.28), 0 8px 20px rgba(0, 0, 0, 0.32);
+}
+
+.pmButton:hover:not(:disabled)::after {
+  transform: translateX(420%) rotate(16deg);
+}
+
+.pmButton:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+  box-shadow: 0 0 0 1px rgba(255, 214, 140, 0.45), 0 3px 10px rgba(0, 0, 0, 0.25), 0 0 24px rgba(255, 204, 102, 0.35);
+}
+
+.pmButton:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.pmButtonPrimary {
+  background: linear-gradient(140deg, #ffd787, #f3b650 42%, #d38d2d);
+  color: #3b1108;
+  border-color: rgba(255, 233, 181, 0.65);
+  text-shadow: 0 1px 0 rgba(255, 236, 196, 0.35);
+}
+
+.pmButtonGhost {
+  background: transparent;
+}
+
+.pmPill {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(68, 14, 18, 0.74);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pmPillAccent {
+  background: rgba(243, 182, 80, 0.22);
+  color: #ffdba0;
+  border-color: transparent;
+}
+
+.pmPillSuccess {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: transparent;
+}
+
+.pmPillDanger {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: transparent;
+}
+
+.pmPillWarning {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border-color: transparent;
+}
+
+.pmInput,
+.pmSelect {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(56, 12, 16, 0.72);
+  color: var(--foreground);
+  outline: none;
+}
+
+.pmInput:focus,
+.pmSelect:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(243, 182, 80, 0.2);
+}
+
+.pmMuted {
+  color: var(--muted);
+}
+
+.pmMono {
+  font-variant-numeric: tabular-nums;
+}
+
+.pmTrendUp {
+  color: var(--hot);
+}
+
+.pmTrendDown {
+  color: var(--cold);
+}
+
+.pmOddsBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(72px, auto) minmax(0, 1fr);
+  align-items: stretch;
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+}
+
+.pmOddsHome,
+.pmOddsAway,
+.pmOddsDraw {
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 10px 14px;
+}
+
+.pmOddsHome {
+  background: linear-gradient(135deg, rgba(243, 182, 80, 0.28), rgba(136, 52, 28, 0.12));
+}
+
+.pmOddsAway {
+  background: linear-gradient(135deg, rgba(164, 34, 51, 0.16), rgba(255, 126, 139, 0.26));
+  text-align: right;
+}
+
+.pmOddsDraw {
+  background: rgba(91, 30, 18, 0.45);
+  align-items: center;
+  text-align: center;
+}
+
+.pmOddsLabel {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pmOddsValue {
+  margin-top: 4px;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+
 @media (prefers-color-scheme: dark) {
   html {
     color-scheme: dark;
+  }
+
+  .pmPill {
+    background: rgba(68, 14, 18, 0.74);
+  }
+
+  .pmInput,
+  .pmSelect {
+    background: rgba(56, 12, 16, 0.72);
   }
 }

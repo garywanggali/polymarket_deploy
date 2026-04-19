@@ -1,0 +1,54 @@
+.page {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.main {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.subTitle {
+  margin-top: 6px;
+  color: hsl(0 0% 40%);
+  font-size: 13px;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.link {
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid hsl(0 0% 86%);
+  color: hsl(0 0% 20%);
+  font-size: 13px;
+}
+
+.empty {
+  padding: 18px;
+  border: 1px solid hsl(0 0% 86%);
+  border-radius: 12px;
+  color: hsl(0 0% 40%);
+}
+
