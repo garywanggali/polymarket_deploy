@@ -11,6 +11,8 @@ type IngestOptions = {
   active?: boolean;
   closed?: boolean;
   maxMs?: number;
+  maxMarkets?: number;
+  snapshotTopN?: number;
 };
 
 export async function ingestGammaEvents(options: IngestOptions = {}): Promise<IngestSummary> {
@@ -20,12 +22,18 @@ export async function ingestGammaEvents(options: IngestOptions = {}): Promise<In
   // 3) classify tags/signals
   // 4) write latest index + append a snapshot line for time-series features
   const updatedAt = new Date().toISOString();
+  const envInt = (key: string) => {
+    const raw = (process.env[key] ?? "").trim();
+    if (!raw) return null;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) ? n : null;
+  };
   const pageLimit = options.pageLimit ?? 200;
-  const maxEvents = options.maxEvents ?? 5000;
+  const maxEvents = options.maxEvents ?? envInt("INGEST_MAX_EVENTS") ?? (process.env.VERCEL ? 1500 : 5000);
   const order = options.order ?? "volume_24hr";
   const active = options.active ?? true;
   const closed = options.closed ?? false;
-  const maxMs = options.maxMs ?? 60_000;
+  const maxMs = options.maxMs ?? envInt("INGEST_MAX_MS") ?? (process.env.VERCEL ? 45_000 : 60_000);
 
   let offset = 0;
   let eventsFetched = 0;
@@ -72,6 +80,9 @@ export async function ingestGammaEvents(options: IngestOptions = {}): Promise<In
 
   markets.sort((a, b) => (b.volume24hr ?? 0) - (a.volume24hr ?? 0));
 
+  const maxMarkets = options.maxMarkets ?? envInt("INGEST_MAX_MARKETS") ?? (process.env.VERCEL ? 1200 : markets.length);
+  const marketsForIndex = markets.slice(0, Math.max(1, maxMarkets));
+
   const index: MarketIndex = {
     updatedAt,
     source: {
@@ -87,16 +98,16 @@ export async function ingestGammaEvents(options: IngestOptions = {}): Promise<In
         maxMs,
       },
     },
-    count: markets.length,
-    markets,
+    count: marketsForIndex.length,
+    markets: marketsForIndex,
   };
 
   await writeMarketIndex(index);
 
-  const snapshotTopN = 1000;
+  const snapshotTopN = options.snapshotTopN ?? envInt("INGEST_SNAPSHOT_TOP_N") ?? (process.env.VERCEL ? 250 : 1000);
   await appendSnapshotLine({
     t: updatedAt,
-    markets: markets.slice(0, snapshotTopN).map((m) => ({
+    markets: marketsForIndex.slice(0, snapshotTopN).map((m) => ({
       slug: m.slug,
       liquidity: m.liquidity,
       volume24hr: m.volume24hr,
@@ -108,6 +119,6 @@ export async function ingestGammaEvents(options: IngestOptions = {}): Promise<In
     updatedAt,
     eventsFetched,
     marketsFetched,
-    marketsWritten: markets.length,
+    marketsWritten: marketsForIndex.length,
   };
 }

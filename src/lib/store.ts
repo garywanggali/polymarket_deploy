@@ -15,7 +15,7 @@ export type SnapshotLine = { t: string; markets: SnapshotMarket[] };
 
 const KV_MARKETS_KEY = "polymarket:markets:index";
 const KV_SNAPSHOTS_KEY = "polymarket:snapshots:lines";
-const KV_SNAPSHOT_MAX_LINES = 2000;
+const KV_SNAPSHOT_MAX_LINES = 300;
 
 function hasKvEnv() {
   return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
