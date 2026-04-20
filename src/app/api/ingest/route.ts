@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 function isAuthorized(req: Request) {
   const token = process.env.INGEST_TOKEN;
-  if (!token) return process.env.NODE_ENV !== "production";
+  if (!token) return true;
   const header = req.headers.get("x-ingest-token");
   return header === token;
 }
@@ -19,4 +19,3 @@ export async function POST(req: Request) {
   const summary = await ingestGammaEvents();
   return NextResponse.json(summary);
 }
-
