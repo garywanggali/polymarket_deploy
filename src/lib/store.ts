@@ -13,11 +13,53 @@ export type SnapshotMarket = {
 };
 export type SnapshotLine = { t: string; markets: SnapshotMarket[] };
 
+const KV_MARKETS_KEY = "polymarket:markets:index";
+const KV_SNAPSHOTS_KEY = "polymarket:snapshots:lines";
+const KV_SNAPSHOT_MAX_LINES = 2000;
+
+function hasKvEnv() {
+  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+}
+
+type KvClient = {
+  get<T = unknown>(key: string): Promise<T | null>;
+  set(key: string, value: string): Promise<unknown>;
+  rpush(key: string, ...values: string[]): Promise<unknown>;
+  ltrim(key: string, start: number, stop: number): Promise<unknown>;
+  lrange<T = unknown>(key: string, start: number, stop: number): Promise<T[]>;
+};
+
+let kvClientPromise: Promise<KvClient | null> | null = null;
+
+async function getKvClient(): Promise<KvClient | null> {
+  if (!hasKvEnv()) return null;
+  if (!kvClientPromise) {
+    kvClientPromise = import("@vercel/kv")
+      .then((mod) => {
+        if (!mod.kv) return null;
+        return mod.kv as unknown as KvClient;
+      })
+      .catch(() => null);
+  }
+  return kvClientPromise;
+}
+
 async function ensureDir(dirPath: string) {
   await fs.mkdir(dirPath, { recursive: true });
 }
 
 export async function readMarketIndex(): Promise<MarketIndex | null> {
+  const kv = await getKvClient();
+  if (kv) {
+    try {
+      const raw = await kv.get<string>(KV_MARKETS_KEY);
+      if (!raw || typeof raw !== "string") return null;
+      return JSON.parse(raw) as MarketIndex;
+    } catch {
+      return null;
+    }
+  }
+
   try {
     const raw = await fs.readFile(getMarketsIndexPath(), "utf8");
     return JSON.parse(raw) as MarketIndex;
@@ -27,6 +69,12 @@ export async function readMarketIndex(): Promise<MarketIndex | null> {
 }
 
 export async function writeMarketIndex(index: MarketIndex) {
+  const kv = await getKvClient();
+  if (kv) {
+    await kv.set(KV_MARKETS_KEY, JSON.stringify(index));
+    return;
+  }
+
   const dir = getLocalDataDir();
   await ensureDir(dir);
 
@@ -38,6 +86,14 @@ export async function writeMarketIndex(index: MarketIndex) {
 }
 
 export async function appendSnapshotLine(line: unknown) {
+  const kv = await getKvClient();
+  if (kv) {
+    const serialized = JSON.stringify(line);
+    await kv.rpush(KV_SNAPSHOTS_KEY, serialized);
+    await kv.ltrim(KV_SNAPSHOTS_KEY, -KV_SNAPSHOT_MAX_LINES, -1);
+    return;
+  }
+
   // Snapshots are stored as JSONL (append-only) to support time-series features:
   // movers radar, watchlist alerts, per-market timeline, and minimal backtests.
   const dir = getLocalDataDir();
@@ -82,6 +138,29 @@ function asSnapshotLine(v: unknown): SnapshotLine | null {
 export async function readSnapshotLines(options: { maxLines?: number } = {}): Promise<SnapshotLine[]> {
   // Reads the tail of snapshots.jsonl. This is intentionally bounded to keep page renders fast.
   const maxLines = Math.max(1, options.maxLines ?? 50);
+
+  const kv = await getKvClient();
+  if (kv) {
+    try {
+      const all = await kv.lrange<string>(KV_SNAPSHOTS_KEY, 0, -1);
+      const tail = all.slice(Math.max(0, all.length - maxLines));
+      const out: SnapshotLine[] = [];
+      for (const line of tail) {
+        if (typeof line !== "string") continue;
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          const snap = asSnapshotLine(parsed);
+          if (snap) out.push(snap);
+        } catch {
+          continue;
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
   try {
     const raw = await fs.readFile(getSnapshotsPath(), "utf8");
     const lines = raw

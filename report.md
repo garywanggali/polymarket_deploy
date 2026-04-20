@@ -2,7 +2,7 @@
 
 Project: Polymarket Opportunity Radar (Data Service Web App)
 
-Author: <YOUR_NAME>
+Author: <Gary Wang>
 
 Date: <YYYY-MM-DD>
 
