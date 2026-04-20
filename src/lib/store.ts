@@ -44,6 +44,50 @@ async function getKvClient(): Promise<KvClient | null> {
   return kvClientPromise;
 }
 
+type RedisClient = {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string): Promise<unknown>;
+  rPush(key: string, values: string[] | string): Promise<unknown>;
+  lTrim(key: string, start: number, stop: number): Promise<unknown>;
+  lRange(key: string, start: number, stop: number): Promise<string[]>;
+};
+
+function getRedisUrlFromEnv(): string | null {
+  const direct = (process.env.REDIS_URL ?? "").trim();
+  if (direct) return direct;
+
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!k.endsWith("_REDIS_URL")) continue;
+    const s = typeof v === "string" ? v.trim() : "";
+    if (s) return s;
+  }
+  return null;
+}
+
+let redisClientPromise: Promise<RedisClient | null> | null = null;
+
+async function getRedisClient(): Promise<RedisClient | null> {
+  const url = getRedisUrlFromEnv();
+  if (!url) return null;
+
+  if (!redisClientPromise) {
+    redisClientPromise = import("redis")
+      .then(async (mod) => {
+        const createClient = mod.createClient as unknown as (opts: { url: string }) => RedisClient & {
+          connect(): Promise<void>;
+          on(event: string, listener: (...args: unknown[]) => void): unknown;
+        };
+        const client = createClient({ url });
+        client.on("error", () => null);
+        await client.connect();
+        return client;
+      })
+      .catch(() => null);
+  }
+
+  return redisClientPromise;
+}
+
 async function ensureDir(dirPath: string) {
   await fs.mkdir(dirPath, { recursive: true });
 }
@@ -54,6 +98,17 @@ export async function readMarketIndex(): Promise<MarketIndex | null> {
     try {
       const raw = await kv.get<string>(KV_MARKETS_KEY);
       if (!raw || typeof raw !== "string") return null;
+      return JSON.parse(raw) as MarketIndex;
+    } catch {
+      return null;
+    }
+  }
+
+  const redis = await getRedisClient();
+  if (redis) {
+    try {
+      const raw = await redis.get(KV_MARKETS_KEY);
+      if (!raw) return null;
       return JSON.parse(raw) as MarketIndex;
     } catch {
       return null;
@@ -75,6 +130,12 @@ export async function writeMarketIndex(index: MarketIndex) {
     return;
   }
 
+  const redis = await getRedisClient();
+  if (redis) {
+    await redis.set(KV_MARKETS_KEY, JSON.stringify(index));
+    return;
+  }
+
   const dir = getLocalDataDir();
   await ensureDir(dir);
 
@@ -91,6 +152,14 @@ export async function appendSnapshotLine(line: unknown) {
     const serialized = JSON.stringify(line);
     await kv.rpush(KV_SNAPSHOTS_KEY, serialized);
     await kv.ltrim(KV_SNAPSHOTS_KEY, -KV_SNAPSHOT_MAX_LINES, -1);
+    return;
+  }
+
+  const redis = await getRedisClient();
+  if (redis) {
+    const serialized = JSON.stringify(line);
+    await redis.rPush(KV_SNAPSHOTS_KEY, serialized);
+    await redis.lTrim(KV_SNAPSHOTS_KEY, -KV_SNAPSHOT_MAX_LINES, -1);
     return;
   }
 
@@ -147,6 +216,27 @@ export async function readSnapshotLines(options: { maxLines?: number } = {}): Pr
       const out: SnapshotLine[] = [];
       for (const line of tail) {
         if (typeof line !== "string") continue;
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          const snap = asSnapshotLine(parsed);
+          if (snap) out.push(snap);
+        } catch {
+          continue;
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  const redis = await getRedisClient();
+  if (redis) {
+    try {
+      const all = await redis.lRange(KV_SNAPSHOTS_KEY, 0, -1);
+      const tail = all.slice(Math.max(0, all.length - maxLines));
+      const out: SnapshotLine[] = [];
+      for (const line of tail) {
         try {
           const parsed = JSON.parse(line) as unknown;
           const snap = asSnapshotLine(parsed);
