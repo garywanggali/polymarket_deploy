@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 
 import styles from "./page.module.css";
 
@@ -43,6 +44,142 @@ function trendLabel(move: number | null) {
   if (move <= -0.03) return "快速降温";
   if (move < 0) return "偏冷";
   return "横盘";
+}
+
+async function aiExplain(payload: {
+  snapshot: { prev: string | null; last: string | null };
+  movers: {
+    slug: string;
+    title: string;
+    yesPrice: number | null;
+    move: number | null;
+    liquidity: number | null;
+    volume24hr: number | null;
+    trend: string;
+  }[];
+}) {
+  const deepseekKey = (process.env.DEEPSEEK_API_KEY ?? "").trim();
+  if (!deepseekKey) {
+    return "未检测到 DEEPSEEK_API_KEY。请在 Vercel 环境变量中配置后重新部署。";
+  }
+
+  if (payload.movers.length === 0) {
+    return "当前没有足够的异动样本可分析。请先抓取至少两次盘口，或等待市场有更多波动。";
+  }
+
+  const deepseekBaseUrl = (process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1").trim().replace(/\/+$/, "");
+  const deepseekTimeoutMs = Math.min(120_000, Math.max(10_000, toInt(process.env.DEEPSEEK_TIMEOUT_MS, 45_000)));
+  const deepseekRetries = Math.min(2, Math.max(0, toInt(process.env.DEEPSEEK_RETRIES, 1)));
+  const model = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-chat";
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  for (let attempt = 0; attempt <= deepseekRetries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), deepseekTimeoutMs);
+    try {
+      const res = await fetch(`${deepseekBaseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${deepseekKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.25,
+          max_tokens: 900,
+          messages: [
+            {
+              role: "system",
+              content:
+                "你是预测市场助手。你必须只用简体中文输出，禁止使用英文句子。面向实盘用户，内容可执行，必须包含风险提示，并明确“不构成投资建议”。",
+            },
+            {
+              role: "user",
+              content: [
+                "请全程只用简体中文回复，不要英文。",
+                "请基于这组异动市场做推荐解读：",
+                "1) 按优先级给出 3-5 个最值得看的市场（写出原因）",
+                "2) 每个给一个观察/执行建议（如等回撤、看成交持续性、看截止时间）",
+                "3) 给出参数建议：如果想看到更多机会，最小|Δp|建议调到多少",
+                "4) 最后给出统一风险清单",
+                "",
+                "数据（JSON）：",
+                JSON.stringify(payload),
+              ].join("\n"),
+            },
+          ],
+        }),
+        signal: controller.signal,
+      });
+
+      const rawText = await res.text();
+      let raw: {
+        choices?: { message?: { content?: string | null } | null; finish_reason?: string | null }[];
+        error?: { message?: string } | string;
+      } | null = null;
+      if (rawText) {
+        try {
+          raw = JSON.parse(rawText) as {
+            choices?: { message?: { content?: string | null } | null; finish_reason?: string | null }[];
+            error?: { message?: string } | string;
+          };
+        } catch {
+          raw = null;
+        }
+      }
+
+      if (!res.ok) {
+        const msg =
+          typeof raw?.error === "string"
+            ? raw.error
+            : raw?.error && typeof raw.error === "object" && typeof raw.error.message === "string"
+              ? raw.error.message
+              : rawText.slice(0, 200) || `HTTP ${res.status}`;
+        return `AI 调用失败：${msg}`;
+      }
+
+      const first = raw?.choices?.[0];
+      const content = first?.message?.content;
+      if (typeof content === "string" && content.trim()) return content.trim();
+
+      if (rawText && /Authentication Fails|governor/i.test(rawText)) {
+        return "AI 调用失败：鉴权被网关拒绝（Authentication Fails / governor）。请确认 DeepSeek Key 有效、未过期、未被风控。";
+      }
+
+      const finishReason = first?.finish_reason ?? "unknown";
+      return `AI 没有返回内容（finish_reason=${finishReason}）。请重试，或减少同时分析的市场数量。`;
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      const cause = err as Error & { cause?: { code?: string; message?: string } };
+      const isTimeout = err.name === "AbortError" || cause.cause?.code === "UND_ERR_CONNECT_TIMEOUT";
+      if (isTimeout && attempt < deepseekRetries) {
+        await sleep(800 * (attempt + 1));
+        continue;
+      }
+      if (isTimeout) {
+        return [
+          `AI 调用失败：请求超时（${Math.round(deepseekTimeoutMs / 1000)}s，已重试 ${deepseekRetries} 次）。`,
+          `当前接口：${deepseekBaseUrl}`,
+          "请稍后重试，或配置可用代理 DEEPSEEK_BASE_URL（例如 https://<your-proxy>/v1）。",
+        ].join("\n");
+      }
+      return `AI 调用失败：${cause.cause?.message ?? err.message}`;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  return "AI 调用失败：未知网络错误。";
+}
+
+async function AiBlock(props: { payload: Parameters<typeof aiExplain>[0] }) {
+  const text = await aiExplain(props.payload);
+  return (
+    <div className="pmCard" style={{ padding: 14, marginBottom: 12 }}>
+      <div style={{ fontWeight: 700, marginBottom: 8 }}>AI 推荐（DeepSeek）</div>
+      <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6, fontSize: 14 }}>{text}</div>
+    </div>
+  );
 }
 
 function timeLeftHours(endDate: string | null) {
@@ -139,140 +276,21 @@ export default async function Home(props: { searchParams: Promise<Record<string,
 
   const topAbsMove = radarRows.length > 0 ? (radarRows[0]?.absMove ?? null) : null;
 
-  const deepseekKey = (process.env.DEEPSEEK_API_KEY ?? "").trim();
-  const deepseekBaseUrl = (process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1").trim().replace(/\/+$/, "");
-  const deepseekTimeoutMs = Math.min(120_000, Math.max(10_000, toInt(process.env.DEEPSEEK_TIMEOUT_MS, 45_000)));
-  const deepseekRetries = Math.min(2, Math.max(0, toInt(process.env.DEEPSEEK_RETRIES, 1)));
-
-  const runAi = async () => {
-    if (!ai) return null;
-    if (!deepseekKey) {
-      return "未检测到 DEEPSEEK_API_KEY。请在 .env.local 配置后重启 dev server。";
-    }
-    if (radarRows.length === 0) {
-      return "当前没有足够的异动样本可分析。请先抓取至少两次盘口，或等待市场有更多波动。";
-    }
-
-    const payload = {
-      snapshot: {
-        prev: prevSnap?.t ?? null,
-        last: lastSnap?.t ?? null,
-      },
-      movers: radarRows.map((m) => ({
-        slug: m.slug,
-        title: m.title,
-        yesPrice: m.price === null ? null : Number(m.price.toFixed(4)),
-        move: m.move === null ? null : Number(m.move.toFixed(4)),
-        liquidity: m.liquidity === null ? null : Number(m.liquidity.toFixed(2)),
-        volume24hr: m.volume24hr === null ? null : Number(m.volume24hr.toFixed(2)),
-        trend: trendLabel(m.move),
-      })),
-    };
-
-    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-    for (let attempt = 0; attempt <= deepseekRetries; attempt++) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), deepseekTimeoutMs);
-      try {
-        const res = await fetch(`${deepseekBaseUrl}/chat/completions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${deepseekKey}`,
-          },
-          body: JSON.stringify({
-            model: process.env.DEEPSEEK_MODEL?.trim() || "deepseek-chat",
-            temperature: 0.25,
-            max_tokens: 900,
-            messages: [
-              {
-                role: "system",
-                content:
-                  "你是预测市场助手。你必须只用简体中文输出，禁止使用英文句子。面向实盘用户，内容可执行，必须包含风险提示，并明确“不构成投资建议”。",
-              },
-              {
-                role: "user",
-                content: [
-                  "请全程只用简体中文回复，不要英文。",
-                  "请基于这组异动市场做推荐解读：",
-                  "1) 按优先级给出 3-5 个最值得看的市场（写出原因）",
-                  "2) 每个给一个观察/执行建议（如等回撤、看成交持续性、看截止时间）",
-                  "3) 给出参数建议：如果想看到更多机会，最小|Δp|建议调到多少",
-                  "4) 最后给出统一风险清单",
-                  "",
-                  "数据（JSON）：",
-                  JSON.stringify(payload),
-                ].join("\n"),
-              },
-            ],
-          }),
-          signal: controller.signal,
-        });
-
-        const rawText = await res.text();
-        let raw: {
-          choices?: { message?: { content?: string | null } | null; finish_reason?: string | null }[];
-          error?: { message?: string } | string;
-        } | null = null;
-        if (rawText) {
-          try {
-            raw = JSON.parse(rawText) as {
-              choices?: { message?: { content?: string | null } | null; finish_reason?: string | null }[];
-              error?: { message?: string } | string;
-            };
-          } catch {
-            raw = null;
-          }
-        }
-
-        if (!res.ok) {
-          const msg =
-            typeof raw?.error === "string"
-              ? raw.error
-              : raw?.error && typeof raw.error === "object" && typeof raw.error.message === "string"
-                ? raw.error.message
-                : rawText.slice(0, 200) || `HTTP ${res.status}`;
-          return `AI 调用失败：${msg}`;
-        }
-
-        const first = raw?.choices?.[0];
-        const content = first?.message?.content;
-        if (typeof content === "string" && content.trim()) return content.trim();
-
-        if (rawText && /Authentication Fails|governor/i.test(rawText)) {
-          return "AI 调用失败：鉴权被网关拒绝（Authentication Fails / governor）。请确认 DeepSeek Key 有效、未过期、未被风控，并重启服务后重试。";
-        }
-
-        if (!raw || !Array.isArray(raw.choices)) {
-          return `AI 返回格式异常：${rawText.slice(0, 180) || "empty_response"}`;
-        }
-
-        const finishReason = first?.finish_reason ?? "unknown";
-        return `AI 没有返回内容（finish_reason=${finishReason}）。请重试，或减少同时分析的市场数量。`;
-      } catch (e) {
-        const err = e instanceof Error ? e : new Error(String(e));
-        const cause = err as Error & { cause?: { code?: string; message?: string } };
-        const isTimeout = err.name === "AbortError" || cause.cause?.code === "UND_ERR_CONNECT_TIMEOUT";
-        if (isTimeout && attempt < deepseekRetries) {
-          await sleep(800 * (attempt + 1));
-          continue;
-        }
-        if (isTimeout) {
-          return [
-            `AI 调用失败：请求超时（${Math.round(deepseekTimeoutMs / 1000)}s，已重试 ${deepseekRetries} 次）。`,
-            `当前接口：${deepseekBaseUrl}`,
-            "请稍后重试，或配置可用代理 DEEPSEEK_BASE_URL（例如 https://<your-proxy>/v1）。",
-          ].join("\n");
-        }
-        return `AI 调用失败：${cause.cause?.message ?? err.message}`;
-      } finally {
-        clearTimeout(timeout);
-      }
-    }
-    return "AI 调用失败：未知网络错误。";
+  const aiPayload = {
+    snapshot: {
+      prev: prevSnap?.t ?? null,
+      last: lastSnap?.t ?? null,
+    },
+    movers: radarRows.map((m) => ({
+      slug: m.slug,
+      title: m.title,
+      yesPrice: m.price === null ? null : Number(m.price.toFixed(4)),
+      move: m.move === null ? null : Number(m.move.toFixed(4)),
+      liquidity: m.liquidity === null ? null : Number(m.liquidity.toFixed(2)),
+      volume24hr: m.volume24hr === null ? null : Number(m.volume24hr.toFixed(2)),
+      trend: trendLabel(m.move),
+    })),
   };
-
-  const aiText = await runAi();
 
   let markets = allMarkets;
   if (q) markets = markets.filter((m) => m.title.toLowerCase().includes(q.toLowerCase()));
@@ -363,10 +381,16 @@ export default async function Home(props: { searchParams: Promise<Record<string,
             ) : null}
           </div>
           {ai ? (
-            <div className="pmCard" style={{ padding: 14, marginBottom: 12 }}>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>AI 推荐（DeepSeek）</div>
-              <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6, fontSize: 14 }}>{aiText ?? "AI 暂无输出。"}</div>
-            </div>
+            <Suspense
+              fallback={
+                <div className="pmCard" style={{ padding: 14, marginBottom: 12 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>AI 推荐（DeepSeek）</div>
+                  <div style={{ fontSize: 14, opacity: 0.85 }}>AI 生成中，请稍等…</div>
+                </div>
+              }
+            >
+              <AiBlock payload={aiPayload} />
+            </Suspense>
           ) : null}
           <div className={styles.cardGrid}>
             {radarRows.length > 0 ? radarRows.map((m) => (

@@ -1,241 +1,181 @@
-# PA! Web Scraping Data Service Project Report
+# PA! Web Scraping Data Service Project Report — Polymarket Opportunity Radar
 
-Project: Polymarket Opportunity Radar (Data Service Web App)
+Author: Gary Wang  
+Date: 2026-04-20  
 
-Author: <Gary Wang>
+Live Deployment (Production): https://polymarketdeploy.vercel.app/  
+GitHub Repository: https://github.com/garywanggali/polymarket_deploy  
+Demo Video (3–5 min): （待补充）  
 
-Date: <YYYY-MM-DD>
+## 0. Executive Summary
 
-Live Deployment: <YOUR_DEPLOYMENT_URL>
+本项目是一个“数据服务型”Web 应用：通过外部数据源（Polymarket Gamma API）获取全量市场信息，进行清洗与结构化、生成时间序列快照，并将其转化为可操作的决策界面：异动雷达、事件一致性、可交易性风险标签、关注列表提醒、单市场时间线与简易回测实验。
 
-GitHub Repository: https://github.com/garywanggali/polymarket
+核心价值不在“展示一张市场列表”，而在于利用持续快照把“单点数据”升级为“变化数据”，让用户能更快发现有意义的价格变化，并用流动性/成交量等维度过滤噪声。
 
-Demo Video (3–5 min): <YOUR_VIDEO_LINK>
+## 1. Problem Statement
 
-Project Report PDF: <YOUR_REPORT_PDF_LINK_OR_FILE>
+预测市场具有如下典型信息不对称问题：
 
-## 1. Background / Problem Statement
+- 市场数量巨大，人工扫描无法及时捕捉早期异动。
+- 很多“价格变化”并不具备可执行性（薄流动性、低成交确认、临近截止带来的剧烈波动）。
+- 没有历史快照，无法计算 Δp、趋势确认、甚至做最小化的策略验证。
 
-Prediction markets update in real time and contain thousands of markets. Users face an information gap:
+目标：构建一个可部署的数据服务 Web App，支持一键更新数据并形成时间序列快照，提供“更高信噪比”的筛选与解释工具。
 
-- It is hard to notice meaningful price movement early across thousands of markets.
-- Many apparent “moves” are noise (thin liquidity, low-volume manipulation, near-expiry volatility).
-- Without historical snapshots, users cannot validate whether a signal has any statistical edge.
+## 2. Data Source & Collection
 
-Goal: build a web app that retrieves external data, cleans/normalizes it, stores time-series snapshots, and presents value-added features that help users make faster and higher-quality decisions.
-
-## 2. Data Sources
-
-Primary source (external data retrieval):
+外部数据源：
 
 - Polymarket Gamma API
-  - Base URL: `https://gamma-api.polymarket.com`
-  - Endpoint used: `/events`
+  - Base URL: https://gamma-api.polymarket.com
+  - Endpoint: `/events`
 
-Key fields used:
+主要字段（用于业务计算与 UI）：
 
-- Market identity: `slug`, `title`, `eventSlug`
-- Market state: `liquidity`, `volume24hr`, `outcomes[].price`
-- Time information: `endDate` (near-expiry warnings)
+- 市场标识：`slug`, `title`, `eventSlug`
+- 交易与风险：`liquidity`, `volume24hr`
+- 价格：`outcomes[].price`
+- 时间：`endDate`（临近截止风险提示）
 
-## 3. Compliance & Ethics
+拉取方式：
 
-This project is designed to be responsible and safe:
+- 通过 API（而非 HTML 页面抓取）。
+- 分页获取并在服务端聚合、去重、排序（按 24h 成交等）。
 
-- Data access method:
-  - Uses a public API endpoint rather than scraping HTML pages.
-- Load protection (rate limiting / safety):
-  - Timeouts via `AbortController` to prevent hanging connections.
-  - Limited retries (3 attempts) with exponential backoff + jitter to reduce upstream pressure.
-  - Ingest job is user-triggered and bounded by:
-    - `pageLimit` (pagination size)
-    - `maxEvents` (maximum items)
-    - `maxMs` (maximum runtime per ingest)
-- Privacy & ethics:
-  - Does not collect personal data.
-  - Stores only market-level public data needed for the service.
-- Security:
-  - No API keys are hardcoded.
-  - Secrets are read from environment variables (e.g., `.env.local`) and excluded from git.
+## 3. Compliance, Ethics & Safety
 
-Robots/ToS note:
+为了避免对外部数据源造成压力并保证合规性，本项目做了以下防护：
 
-- robots.txt typically applies to web crawlers accessing HTML pages; this project calls an API endpoint.
-- Regardless of robots scope, the implementation still applies safe retry/time limits and avoids aggressive request patterns.
+- 请求超时：使用 `AbortController` 为上游请求设置超时，避免悬挂连接。
+- 安全重试：有限次数重试（默认 3 次），并使用指数退避+随机抖动，减少短时间突发请求。
+- 任务可控：抓取由用户触发，且有上限控制（分页大小、最大事件数、最大运行时间）。
+- 数据最小化：不采集个人隐私数据，仅存储公开的市场层数据用于分析展示。
+- 密钥安全：外部 AI Key 等均通过环境变量配置，不写入仓库、不在客户端暴露。
 
-## 4. Technical Solution & Architecture
+## 4. System Architecture
 
-### 4.1 Tech Stack
+技术栈：
 
 - Next.js (App Router) + React + TypeScript
-- Node.js runtime for API routes
-- Local persistence for demo: `.local-data/`
+- API Routes 使用 Node.js runtime
+- 部署平台：Vercel
 
-### 4.2 System Architecture
+数据流（从采集到展示）：
 
-**(1) Ingest pipeline**
+1) Ingest（采集与落库）
 
-- Trigger: user clicks “更新最新盘口”
-- Route: `POST /api/ingest`
-- Steps:
-  1. Paginate `/events` from Gamma API
-  2. Normalize events → markets
-  3. Add classification tags/signals (risk, category, near-expiry, etc.)
-  4. Persist:
-     - Latest market index: `.local-data/markets.json`
-     - Snapshot history: `.local-data/snapshots.jsonl` (append-only)
+- 入口：点击 “更新最新盘口”
+- API：`POST /api/ingest`
+- 处理流程：
+  - 分页拉取 Gamma `/events`
+  - Normalize：事件 → 市场列表（结构统一）
+  - Classify：生成标签/信号（风险、可交易性、临期等）
+  - Persist：写入最新索引 + 追加一条快照（用于 Δp、趋势与简易回测）
 
-**(2) UI / Value-added processing**
+2) Read（页面/接口读取）
 
-- Homepage:
-  - Movers radar: Δp between the latest two snapshots
-  - Event consistency pill: whether multiple markets under the same event move together
-  - Executability labels: liquidity tiers, near-expiry, one-sided probability hints
-  - Market directory with filters
-- Watchlist:
-  - User subscribes to markets
-  - “alerts” panel shows sudden moves only on subscribed markets
-- Market details:
-  - Snapshot timeline table (p, Δp, volume acceleration, liquidity)
-  - Sparkline charts for p / volume / liquidity / volume acceleration / quality score
-  - Event peer comparison table (same event, last two snapshots)
-  - Minimal backtest lab with adjustable parameters
+- 首页、市场详情、地图页等：读取“最新索引 + 快照尾部”并做展示计算（如 Δp、事件一致性等）。
+- API：`GET /api/markets`, `GET /api/markets/[slug]`
 
-**(3) Optional AI analysis**
+## 5. Persistence Strategy (Local vs Production)
 
-- If configured, server calls DeepSeek `chat/completions` to generate a structured summary.
-- Keys are loaded from env vars; not exposed in client code.
+本地开发：
 
-## 5. Implementation Results (Screenshots & Explanations)
+- 默认使用 `.local-data/` 写入 `markets.json` 与 `snapshots.jsonl`。
 
-Replace placeholders with real screenshots:
+线上部署（Vercel）：
 
-1) Homepage (hero + movers radar)
+- 由于 Vercel 运行环境本地文件系统是临时的（/tmp，实例重启/扩容会丢），线上改为写入 Redis 持久化：
+  - 优先支持 KV REST 方式（`KV_REST_API_URL` + `KV_REST_API_TOKEN`）
+  - 若仅有 `*_REDIS_URL`（redis:// 连接串），则使用 `node-redis` 直接连接
 
-- Screenshot: <INSERT_SCREENSHOT>
-- What it demonstrates:
-  - UpdatedAt changes after ingest
-  - Movers cards show Δp, liquidity, volume, event consistency, and executability labels
+容量与成本控制（避免 Redis OOM）：
 
-2) Movers card labels (quality and risk)
+- 线上默认限制写入规模（可用环境变量覆盖）：
+  - `INGEST_MAX_EVENTS`：最大抓取事件数（默认降低）
+  - `INGEST_MAX_MARKETS`：索引最多保存的市场条数
+  - `INGEST_SNAPSHOT_TOP_N`：每条快照最多保存的市场条数
+  - `INGEST_MAX_MS`：采集最大运行时间
+- 快照历史只保留最新一段（固定上限），避免 Redis 无限增长导致 OOM。
 
-- Screenshot: <INSERT_SCREENSHOT>
-- What it demonstrates:
-  - Event consistency ratio helps filter noise
-  - Liquidity tiers and near-expiry flags inform executability
+## 6. Key Features (Value-Added)
 
-3) Market detail page: snapshot timeline + sparklines
+1) 异动雷达（Δp）
 
-- Screenshot: <INSERT_SCREENSHOT>
-- What it demonstrates:
-  - Time-series value from snapshots: p(t), Δp(t), volume acceleration, liquidity changes
+- 通过最近两次快照计算：
+  - `Δp = p(last) - p(prev)`
+  - 使用 `|Δp|` 排序，快速定位“变动明显”的市场
 
-4) Market detail page: minimal backtest lab (adjustable)
+2) 事件一致性（Event Consistency）
 
-- Screenshot: <INSERT_SCREENSHOT>
-- What it demonstrates:
-  - Signal evaluation with thresholds and holding periods
-  - Filters based on minimum liquidity and quality score
+- 将市场按 `eventSlug` 聚合，评估同一事件下多个盘口是否同向变化。
+- 用于过滤单一薄盘噪声，提高信号质量。
 
-5) Watchlist alerts panel
+3) 可交易性标签（Executability Labels）
 
-- Screenshot: <INSERT_SCREENSHOT>
-- What it demonstrates:
-  - “Radar” behavior on subscribed markets
-  - Threshold controls for min |Δp| and min liquidity
+- 流动性分层：提示薄盘滑点与操纵风险
+- 临近截止提示：降低临期噪声误判
+- 单边盘提示：避免追涨杀跌的低性价比交易
 
-6) Geo view
+4) 关注列表与提醒（Watchlist + Alerts）
 
-- Screenshot: <INSERT_SCREENSHOT>
-- What it demonstrates:
-  - Aggregation by country and click-to-drill
+- 用户可对感兴趣市场进行订阅
+- 只对订阅市场显示“异动提醒”，将产品从“仪表盘”升级为“雷达”
 
-## 6. Core Value-added Features (Why the scraping/service matters)
+5) 市场详情页：时间序列与简易回测
 
-### 6.1 Movers Radar (Δp)
+- 显示快照时间线，帮助理解价格/成交/流动性变化
+- 提供最小化回测实验（基于快照历史），用于快速验证信号阈值的合理性
 
-Instead of a single snapshot, the app compares two snapshots:
+6) 可选 AI 解读（DeepSeek）
 
-- `Δp = p(last) - p(prev)`
-- `|Δp|` highlights meaningful moves
-- Adds context:
-  - liquidity and volume acceleration (volume confirmation)
+- 在配置 `DEEPSEEK_API_KEY` 后，可对“异动市场集合”生成结构化解读（含风险提示）。
+- 仅服务端调用，不在客户端暴露 Key。
 
-### 6.2 Event Consistency
+## 7. Deployment (Vercel) Notes
 
-A move is higher quality if multiple markets under the same event move together:
+- 推荐使用 Vercel 部署 Next.js（自动构建、自动部署）。
+- 线上若启用 AI：
+  - 在 Vercel 环境变量中配置 `DEEPSEEK_API_KEY`（以及可选的 base url / model 等）。
+- 线上持久化：
+  - 绑定 Redis/Upstash 并确保生产环境变量存在（`*_REDIS_URL` 或 KV REST 变量）。
 
-- Detects “theme-level” movement
-- Reduces false positives from single-market noise
+## 8. Demo Checklist (3–5 min)
 
-### 6.3 Executability Labels
+建议演示流程：
 
-The UI highlights whether the move is practically tradable:
+1) 打开首页，说明“信息过载 + 噪声过滤”问题。
+2) 点击 “更新最新盘口”，展示数据更新（更新时间、市场数量等变化）。
+3) 解释“异动雷达”：Δp + 流动性 + 成交确认 + 事件一致性。
+4) 打开一个市场详情：看时间序列与对比信息。
+5) 打开关注列表：展示只看“我关心的异动”。
+6) （可选）打开地图页：展示聚合视图与钻取。
+7) 总结局限与改进方向。
 
-- Liquidity tiers: thin markets have higher slippage risk
-- Near-expiry warnings: volatility and settlement sensitivity
-- One-sided probability: chasing can have poor risk/reward
+## 9. Limitations
 
-### 6.4 Watchlist Alerts
+- 信号强度依赖采集频率；快照稀疏会降低 Δp 与趋势判断价值。
+- 交易成本模型是近似（基于流动性/成交），真实滑点需要订单簿深度数据。
+- 外部数据源/API 可用性会影响 ingest 成功率（已做超时与有限重试）。
+- Redis 免费额度有限，需要通过数据上限控制避免 OOM。
 
-Converts the app from “dashboard” → “radar”:
+## 10. Future Work
 
-- Users see sudden changes only for subscribed markets
-- Helps gain time advantage when scanning large market sets
+- 引入更完整的持久化方案（更细粒度索引、长周期历史、查询优化）。
+- 更稳健的异常检测与事件聚类（提升一致性判别与噪声过滤）。
+- 更真实的执行成本估计（如果后续能获取深度/盘口）。
+- 加入后台定时采集与更细的限流策略（适配公开访问）。
 
-### 6.5 Market Detail: Time-series + Quality Score
+## Appendix A: Local Run
 
-The market page adds professional diagnostics:
+```bash
+npm install
+npm run dev
+```
 
-- Sparkline charts for p/volume/liquidity/volume acceleration
-- A quality score (0–1) combining:
-  - Liquidity tier
-  - Volume confirmation strength
-  - Event consistency ratio
+打开：https://polymarketdeploy.vercel.app/
 
-### 6.6 Minimal Backtest Lab (Per-market)
+## Appendix B: Export to PDF
 
-Purpose: verify whether a simple signal may have edge, using snapshot history.
-
-- Signal trigger: `|Δp| ≥ threshold`
-- Strategy (mean reversion): if price moved up, go short; if moved down, go long
-- Exit: after N snapshots
-- Includes a conservative cost penalty proxy based on liquidity (execution cost approximation)
-
-## 7. Demonstration Video (3–5 min) Checklist
-
-Suggested flow:
-
-1) Show homepage and explain the problem (information gap).
-2) Click “更新最新盘口” (demonstrate that external data updates).
-3) Explain movers radar:
-   - Δp, volume acceleration, liquidity, event consistency, executability labels
-4) Open one market detail page:
-   - Sparkline charts + snapshot table
-   - Event peer comparison table
-   - Minimal backtest lab and adjust parameters
-5) Open watchlist:
-   - Add/remove a market
-   - Show alerts panel and thresholds
-6) Optional: geo page click-to-drill
-7) Close with limitations and future work.
-
-## 8. Limitations
-
-- Snapshot resolution depends on ingestion frequency; sparse snapshots reduce signal reliability.
-- Liquidity-based cost model is only an approximation; true slippage needs order book depth.
-- Local file storage is suitable for demo; production deployment should use persistent storage.
-- AI analysis depends on external API availability and network conditions.
-
-## 9. Future Improvements
-
-- Persistent database for snapshots and long-term history.
-- Better anomaly detection (robust statistics, event clustering).
-- True execution cost modeling if order book depth becomes available.
-- Real-time push alerts (WebSocket or server-sent events).
-- Admin rate limiting and caching layers for safe public deployment.
-
-## Appendix: Export to PDF
-
-- Option A: Use a Markdown-to-PDF tool in your editor to export this file.
-- Option B: Render this Markdown and print-to-PDF from the browser.
+用编辑器的 Markdown 导出 PDF 插件导出本文件，或在渲染页面中打印为 PDF。  

@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 export function IngestButton() {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -15,7 +17,9 @@ export function IngestButton() {
         const text = await res.text().catch(() => "");
         throw new Error(text || `HTTP ${res.status}`);
       }
-      window.location.reload();
+      const y = window.scrollY;
+      router.refresh();
+      requestAnimationFrame(() => window.scrollTo({ top: y }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "未知错误");
       setLoading(false);
