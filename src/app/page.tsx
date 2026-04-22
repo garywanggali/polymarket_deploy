@@ -3,6 +3,7 @@ import { Suspense } from "react";
 
 import styles from "./page.module.css";
 
+import { MarketFiltersClient } from "@/components/MarketFiltersClient";
 import { IngestButton } from "@/components/IngestButton";
 import { WatchToggle } from "@/components/WatchToggle";
 import { readMarketIndex, readSnapshotLines } from "@/lib/store";
@@ -361,19 +362,17 @@ export default async function Home(props: { searchParams: Promise<Record<string,
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, marginBottom: 12, flexWrap: "wrap" }}>
-            <form>
-              <input type="hidden" name="q" value={q} />
-              <input type="hidden" name="tag" value={tag} />
-              <input type="hidden" name="sort" value={sort} />
-              <input type="hidden" name="perPage" value={String(perPage)} />
-              <input type="hidden" name="page" value={String(safePage)} />
-              <button type="submit" name="ai" value="1" className="pmButton pmButtonPrimary">
-                AI 推荐解读
-              </button>
-            </form>
+            <Link
+              href={`/?q=${encodeURIComponent(q)}&tag=${encodeURIComponent(tag)}&sort=${encodeURIComponent(sort)}&perPage=${perPage}&page=${safePage}&ai=1`}
+              scroll={false}
+              className="pmButton pmButtonPrimary"
+            >
+              AI 推荐解读
+            </Link>
             {ai ? (
               <Link
                 href={`/?q=${encodeURIComponent(q)}&tag=${encodeURIComponent(tag)}&sort=${encodeURIComponent(sort)}&perPage=${perPage}&page=${safePage}`}
+                scroll={false}
                 className="pmButton pmButtonGhost"
               >
                 清除 AI 结果
@@ -460,14 +459,17 @@ export default async function Home(props: { searchParams: Promise<Record<string,
               <p className={styles.sectionDesc}>不知道看什么时，先按成交量、流动性、截止时间排序最直观。</p>
             </div>
         </div>
-        <form className={styles.filters}>
-            <label className={styles.field}><span>搜索标题</span><input name="q" defaultValue={q} placeholder="输入关键词" className="pmInput" /></label>
-            <label className={styles.field}><span>分类</span><select name="tag" defaultValue={tag} className="pmSelect"><option value="">全部分类</option>{allTags.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
-            <label className={styles.field}><span>排序</span><select name="sort" defaultValue={sort} className="pmSelect"><option value="volume24hr">按 24h 成交</option><option value="liquidity">按 流动性</option><option value="endDate">按 截止时间</option></select></label>
-            <label className={styles.field}><span>每页数量</span><select name="perPage" defaultValue={String(perPage)} className="pmSelect"><option value="60">60</option><option value="120">120</option><option value="240">240</option></select></label>
-          <input type="hidden" name="page" value="1" />
-            <div className={styles.filterAction}><button type="submit" className="pmButton pmButtonPrimary">应用筛选</button></div>
-        </form>
+          <MarketFiltersClient
+            q={q}
+            tag={tag}
+            sort={sort}
+            perPage={perPage}
+            page={safePage}
+            allTags={allTags}
+            classNameFilters={styles.filters}
+            classNameField={styles.field}
+            classNameFilterAction={styles.filterAction}
+          />
 
           <div className={styles.cardGrid}>
             {pageMarkets.map((m) => {
@@ -497,9 +499,21 @@ export default async function Home(props: { searchParams: Promise<Record<string,
 
           {total > 0 ? (
             <div className={styles.pagination}>
-              <Link href={`/?q=${encodeURIComponent(q)}&tag=${encodeURIComponent(tag)}&sort=${encodeURIComponent(sort)}&perPage=${perPage}&page=${Math.max(1, safePage - 1)}`} className={`pmButton pmButtonGhost ${safePage <= 1 ? styles.disabled : ""}`}>上一页</Link>
+              <Link
+                href={`/?q=${encodeURIComponent(q)}&tag=${encodeURIComponent(tag)}&sort=${encodeURIComponent(sort)}&perPage=${perPage}&page=${Math.max(1, safePage - 1)}`}
+                scroll={false}
+                className={`pmButton pmButtonGhost ${safePage <= 1 ? styles.disabled : ""}`}
+              >
+                上一页
+              </Link>
               <div className={styles.pageInfo}>第 {safePage} / {maxPage} 页 · 共 {formatNumber(total)} 条</div>
-              <Link href={`/?q=${encodeURIComponent(q)}&tag=${encodeURIComponent(tag)}&sort=${encodeURIComponent(sort)}&perPage=${perPage}&page=${Math.min(maxPage, safePage + 1)}`} className={`pmButton pmButtonGhost ${safePage >= maxPage ? styles.disabled : ""}`}>下一页</Link>
+              <Link
+                href={`/?q=${encodeURIComponent(q)}&tag=${encodeURIComponent(tag)}&sort=${encodeURIComponent(sort)}&perPage=${perPage}&page=${Math.min(maxPage, safePage + 1)}`}
+                scroll={false}
+                className={`pmButton pmButtonGhost ${safePage >= maxPage ? styles.disabled : ""}`}
+              >
+                下一页
+              </Link>
                     </div>
               ) : null}
         </section>
